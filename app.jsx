@@ -127,6 +127,7 @@ function App() {
   const [reviews, setReviews] = useState([]);
   const [issues, setIssues] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [activityLogs, setActivityLogs] = useState([]);
   const [metrics, setMetrics] = useState({});
 
   const [query, setQuery] = useState("");
@@ -252,6 +253,7 @@ function App() {
       setReviews(data.reviews || []);
       setIssues(data.issues || []);
       setPayments(data.payments || []);
+      setActivityLogs(data.activityLogs || []);
       setMetrics(data.metrics || {});
       setError("");
     } catch (err) {
@@ -346,7 +348,7 @@ function App() {
     if (role === "customer") panelPaths.push("/components/CartCheckout.jsx", "/components/ReviewsPanel.jsx");
     if (role === "artisan") panelPaths.push("/components/ArtisanPanel.jsx", "/components/AdminPanel.jsx");
     if (role === "consultant") panelPaths.push("/components/ConsultantPanel.jsx");
-    if (role === "admin") panelPaths.push("/components/CartCheckout.jsx", "/components/AdminPanel.jsx", "/components/ReviewsPanel.jsx");
+    if (role === "admin") panelPaths.push("/components/ArtisanPanel.jsx", "/components/AdminPanel.jsx", "/components/ConsultantPanel.jsx");
 
     if (panelPaths.length > 0) {
       Promise.allSettled(panelPaths.map(loadComponent)).then(() => setRolePanelsReady(true));
@@ -754,6 +756,7 @@ function App() {
                 )}
                 {rolePanelsReady && window.TC.AdminPanel && (
                   <window.TC.AdminPanel
+                    products={products}
                     orders={orders}
                     updateOrderStatus={updateOrderStatus}
                     ORDER_STATUSES={ORDER_STATUSES}
@@ -764,6 +767,7 @@ function App() {
                     resolveIssue={resolveIssue}
                     payments={payments}
                     updatePaymentStatus={updatePaymentStatus}
+                    activityLogs={activityLogs}
                     money={money}
                     downloadInvoice={downloadInvoice}
                     role={role}
@@ -782,22 +786,27 @@ function App() {
 
             {role === "admin" && rolePanelsReady && (
               <>
-                {window.TC.CartCheckout && (
-                  <window.TC.CartCheckout
-                    cart={cart}
-                    cartTotal={cartTotal}
-                    paymentForm={paymentForm}
-                    setPaymentForm={setPaymentForm}
-                    checkout={checkout}
-                    promotions={promotions}
-                    payments={payments}
-                    user={user}
+                {window.TC.ArtisanPanel && (
+                  <window.TC.ArtisanPanel
+                    newListing={newListing}
+                    setNewListing={setNewListing}
+                    listingImageFile={listingImageFile}
+                    setListingImageFile={setListingImageFile}
+                    createListing={createListing}
+                    orders={orders}
                     money={money}
-                    downloadInvoice={downloadInvoice}
+                  />
+                )}
+                {window.TC.ConsultantPanel && (
+                  <window.TC.ConsultantPanel
+                    products={products}
+                    updateAuth={updateAuth}
+                    AUTH_STATUSES={AUTH_STATUSES}
                   />
                 )}
                 {window.TC.AdminPanel && (
                   <window.TC.AdminPanel
+                    products={products}
                     orders={orders}
                     updateOrderStatus={updateOrderStatus}
                     ORDER_STATUSES={ORDER_STATUSES}
@@ -808,6 +817,7 @@ function App() {
                     resolveIssue={resolveIssue}
                     payments={payments}
                     updatePaymentStatus={updatePaymentStatus}
+                    activityLogs={activityLogs}
                     money={money}
                     downloadInvoice={downloadInvoice}
                     role={role}
@@ -816,7 +826,7 @@ function App() {
               </>
             )}
 
-            {(role === "customer" || role === "admin") && rolePanelsReady && window.TC.ReviewsPanel && (
+            {role === "customer" && rolePanelsReady && window.TC.ReviewsPanel && (
               <window.TC.ReviewsPanel
                 reviewForm={reviewForm}
                 setReviewForm={setReviewForm}

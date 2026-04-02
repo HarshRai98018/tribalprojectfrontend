@@ -2,6 +2,7 @@
 // AdminPanel — Order management, issue resolution, payment monitoring
 // ---------------------------------------------------------------------------
 const AdminPanel = ({
+  products,
   orders,
   updateOrderStatus,
   ORDER_STATUSES,
@@ -12,6 +13,7 @@ const AdminPanel = ({
   resolveIssue,
   payments,
   updatePaymentStatus,
+  activityLogs,
   money,
   downloadInvoice,
   role
@@ -126,6 +128,51 @@ const AdminPanel = ({
               </select>
             </article>
           ))}
+        </section>
+      )}
+
+      {role === "admin" && (
+        <section className="split">
+          <div className="panel">
+            <div className="panel-head">
+              <h2>Product Oversight</h2>
+              <p>Review listings, stock, and publication status</p>
+            </div>
+            {products.length === 0 && <p className="empty">No products available.</p>}
+            {products.slice(0, 8).map((product) => (
+              <article className="issue-card" key={product.id}>
+                <div>
+                  <strong>{product.name}</strong>
+                  <p>
+                    {product.artisanName || "Unassigned artisan"} | Stock {product.stock}
+                  </p>
+                </div>
+                <div className="issue-actions">
+                  <span className={`status-pill ${product.authenticityStatus}`}>{product.authenticityStatus}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div className="panel">
+            <div className="panel-head">
+              <h2>Activity Logs</h2>
+              <p>Recent platform events across orders, payments, issues, and listings</p>
+            </div>
+            {activityLogs.length === 0 && <p className="empty">No activity yet.</p>}
+            {activityLogs.map((log, index) => (
+              <article className="issue-card" key={`${log.type}-${log.title}-${index}`}>
+                <div>
+                  <strong>{log.title}</strong>
+                  <p>{log.detail || "No additional detail"}</p>
+                  {log.timestamp && <small>{log.timestamp}</small>}
+                </div>
+                <div className="issue-actions">
+                  <span className={`status-pill ${log.status || log.type}`}>{log.status || log.type}</span>
+                </div>
+              </article>
+            ))}
+          </div>
         </section>
       )}
     </>

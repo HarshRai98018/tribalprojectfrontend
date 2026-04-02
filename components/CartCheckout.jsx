@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// CartCheckout — Shopping cart, payment method, checkout + payment history
+// CartCheckout - Shopping cart, address, payment method, checkout + history
 // ---------------------------------------------------------------------------
 const CartCheckout = ({
   cart,
@@ -7,12 +7,16 @@ const CartCheckout = ({
   paymentForm,
   setPaymentForm,
   checkout,
+  updateCartQty,
+  removeFromCart,
   promotions,
   payments,
   user,
   money,
   downloadInvoice
 }) => {
+  const customerPayments = payments.filter((payment) => payment.customerId === user.id).slice(0, 5);
+
   return (
     <section className="split">
       <div className="panel">
@@ -25,12 +29,44 @@ const CartCheckout = ({
 
         {cart.map((item) => (
           <div className="line-item" key={item.productId}>
-            <span>{item.name}</span>
-            <span>
-              {item.qty} × {money(item.price)}
-            </span>
+            <div>
+              <strong>{item.name}</strong>
+              <small>{money(item.price)} each</small>
+            </div>
+            <div className="cart-item-actions">
+              <button className="secondary mini-btn" type="button" onClick={() => updateCartQty(item.productId, item.qty - 1)}>
+                -
+              </button>
+              <span className="qty-pill">{item.qty}</span>
+              <button className="secondary mini-btn" type="button" onClick={() => updateCartQty(item.productId, item.qty + 1)}>
+                +
+              </button>
+              <strong>{money(item.qty * item.price)}</strong>
+              <button className="secondary mini-btn" type="button" onClick={() => removeFromCart(item.productId)}>
+                Remove
+              </button>
+            </div>
           </div>
         ))}
+
+        <div className="payment-box">
+          <h3>Delivery Address</h3>
+          <textarea
+            placeholder="Enter complete delivery address"
+            value={paymentForm.address}
+            onChange={(e) => setPaymentForm({ ...paymentForm, address: e.target.value })}
+          />
+          {user.savedAddress && (
+            <button
+              className="secondary mini-btn"
+              type="button"
+              onClick={() => setPaymentForm({ ...paymentForm, address: user.savedAddress })}
+            >
+              Use Saved Address
+            </button>
+          )}
+          <p className="helper-text">This address is required and will be saved for future orders.</p>
+        </div>
 
         <div className="payment-box">
           <h3>Payment Method</h3>
@@ -55,6 +91,7 @@ const CartCheckout = ({
             value={paymentForm.details}
             onChange={(e) => setPaymentForm({ ...paymentForm, details: e.target.value })}
           />
+          <p className="helper-text">Demo payments supported: use demo@upi, 4242, or any bank name.</p>
         </div>
 
         <div className="checkout-row">
@@ -93,23 +130,23 @@ const CartCheckout = ({
           <h2>Payment History</h2>
           <p>Your transactions</p>
         </div>
-        {payments
-          .filter((payment) => payment.customerId === user.id)
-          .slice(0, 5)
-          .map((payment) => (
-            <article className="review-card" key={payment.id}>
-              <strong>{payment.id}</strong>
-              <small>
-                {payment.method.toUpperCase()} | {payment.createdAt}
-              </small>
-              <p>
-                {money(payment.amount)} | {payment.status} | {payment.transactionRef}
-              </p>
-              <button className="secondary mini-btn" onClick={() => downloadInvoice(payment)}>
-                Download Invoice
-              </button>
-            </article>
-          ))}
+        {customerPayments.map((payment) => (
+          <article className="review-card" key={payment.id}>
+            <strong>{payment.id}</strong>
+            <small>
+              {payment.method.toUpperCase()} | {payment.createdAt}
+            </small>
+            <p>
+              {money(payment.amount)} | {payment.status} | {payment.transactionRef}
+            </p>
+            <button className="secondary mini-btn" onClick={() => downloadInvoice(payment)}>
+              Download Invoice
+            </button>
+          </article>
+        ))}
+        {customerPayments.length === 0 && (
+          <p className="empty">Your recent payments will appear here after checkout.</p>
+        )}
       </div>
     </section>
   );

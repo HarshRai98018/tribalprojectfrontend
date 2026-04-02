@@ -349,7 +349,7 @@ function App() {
     if (role === "admin") panelPaths.push("/components/CartCheckout.jsx", "/components/AdminPanel.jsx", "/components/ReviewsPanel.jsx");
 
     if (panelPaths.length > 0) {
-      loadComponents(panelPaths).then(() => setRolePanelsReady(true));
+      Promise.allSettled(panelPaths.map(loadComponent)).then(() => setRolePanelsReady(true));
     } else {
       setRolePanelsReady(true);
     }
@@ -716,9 +716,8 @@ function App() {
           AUTH_STATUSES={AUTH_STATUSES}
         />
 
-        {rolePanelsReady && (
-          <>
-            {role === "customer" && window.TC.CartCheckout && (
+        <>
+            {role === "customer" && rolePanelsReady && window.TC.CartCheckout && (
               <window.TC.CartCheckout
                 cart={cart}
                 cartTotal={cartTotal}
@@ -735,7 +734,7 @@ function App() {
 
             {role === "artisan" && (
               <>
-                {window.TC.ArtisanPanel && (
+                {window.TC.ArtisanPanel ? (
                   <window.TC.ArtisanPanel
                     newListing={newListing}
                     setNewListing={setNewListing}
@@ -745,8 +744,15 @@ function App() {
                     orders={orders}
                     money={money}
                   />
+                ) : (
+                  <div className="panel">
+                    <div className="panel-head">
+                      <h2>Loading artisan tools...</h2>
+                      <p>Please wait while the upload form loads.</p>
+                    </div>
+                  </div>
                 )}
-                {window.TC.AdminPanel && (
+                {rolePanelsReady && window.TC.AdminPanel && (
                   <window.TC.AdminPanel
                     orders={orders}
                     updateOrderStatus={updateOrderStatus}
@@ -766,7 +772,7 @@ function App() {
               </>
             )}
 
-            {role === "consultant" && window.TC.ConsultantPanel && (
+            {role === "consultant" && rolePanelsReady && window.TC.ConsultantPanel && (
               <window.TC.ConsultantPanel
                 products={products}
                 updateAuth={updateAuth}
@@ -774,7 +780,7 @@ function App() {
               />
             )}
 
-            {role === "admin" && (
+            {role === "admin" && rolePanelsReady && (
               <>
                 {window.TC.CartCheckout && (
                   <window.TC.CartCheckout
@@ -810,7 +816,7 @@ function App() {
               </>
             )}
 
-            {(role === "customer" || role === "admin") && window.TC.ReviewsPanel && (
+            {(role === "customer" || role === "admin") && rolePanelsReady && window.TC.ReviewsPanel && (
               <window.TC.ReviewsPanel
                 reviewForm={reviewForm}
                 setReviewForm={setReviewForm}
@@ -819,8 +825,7 @@ function App() {
                 reviews={reviews}
               />
             )}
-          </>
-        )}
+        </>
       </main>
 
       {gatewayOpen && gatewayPayment && (

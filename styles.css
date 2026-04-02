@@ -721,6 +721,23 @@ textarea {
   align-items: center;
 }
 
+.cart-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.qty-pill {
+  min-width: 36px;
+  text-align: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #efe6db;
+  font-weight: 700;
+}
+
 .order-card {
   display: flex;
   justify-content: space-between;
@@ -778,6 +795,13 @@ textarea {
 .payment-box h3 {
   margin: 0 0 8px;
   font-size: 0.95rem;
+}
+
+.helper-text {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .payment-methods {
@@ -864,6 +888,23 @@ textarea {
 
 .gateway-modal p {
   margin: 6px 0;
+}
+
+.gateway-demo-note {
+  margin-top: 10px;
+  border: 1px solid #e5d7c4;
+  border-radius: 10px;
+  padding: 10px;
+  background: #f9f5ee;
+}
+
+.gateway-demo-note strong {
+  display: block;
+}
+
+.gateway-demo-note p {
+  margin: 4px 0 0;
+  color: #5a5044;
 }
 
 .gateway {

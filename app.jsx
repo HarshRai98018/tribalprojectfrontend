@@ -149,7 +149,7 @@ function App() {
 
   const [reviewForm, setReviewForm] = useState({ productId: "", rating: 5, comment: "" });
   const [issueForm, setIssueForm] = useState({ type: "delivery", message: "" });
-  const [paymentForm, setPaymentForm] = useState({ method: "upi", details: "" });
+  const [paymentForm, setPaymentForm] = useState({ method: "upi", details: "", address: "" });
 
   const [gatewayOpen, setGatewayOpen] = useState(false);
   const [gatewayPayment, setGatewayPayment] = useState(null);
@@ -294,6 +294,13 @@ function App() {
   useEffect(() => { if (user) fetchBootstrap(); }, [user]);
 
   useEffect(() => {
+    setPaymentForm((prev) => ({
+      ...prev,
+      address: user?.savedAddress || prev.address || ""
+    }));
+  }, [user?.savedAddress]);
+
+  useEffect(() => {
     if (!user || !isInvoiceRoute) return;
     const paymentId = new URLSearchParams(window.location.search).get("paymentId");
     if (!paymentId) { setInvoiceError("Missing paymentId in invoice URL"); return; }
@@ -331,12 +338,18 @@ function App() {
 
   useEffect(() => {
     if (user && !isInvoiceRoute && !coreReady) {
-      loadComponents([
+      const corePaths = [
         "/components/HeroBanner.jsx",
         "/components/DashboardMetrics.jsx",
         "/components/CraftCatalog.jsx",
         "/components/PaymentGatewayModal.jsx"
-      ]).then(() => setCoreReady(true));
+      ];
+
+      if (user.role === "customer") {
+        corePaths.push("/components/CartCheckout.jsx", "/components/ReviewsPanel.jsx");
+      }
+
+      loadComponents(corePaths).then(() => setCoreReady(true));
     }
   }, [user, isInvoiceRoute, coreReady]);
 
@@ -458,10 +471,14 @@ function App() {
     setToken(""); setUser(null); setCart([]); setNotice(""); setError("");
     setAuthForm({ name: "", email: "", password: "", role: "customer" });
     setAuthMode("login");
-    setPaymentForm({ method: "upi", details: "" });
+    setPaymentForm({ method: "upi", details: "", address: "" });
   };
 
   const addToCart = (product) => {
+    if (product.stock <= 0) {
+      setError(`${product.name} is out of stock`);
+      return;
+    }
     setCart((prev) => {
       const existing = prev.find((item) => item.productId === product.id);
       if (existing) {
@@ -474,19 +491,45 @@ function App() {
     setNotice(`${product.name} added to cart`);
   };
 
+  const updateCartQty = (productId, qty) => {
+    const product = products.find((item) => item.id === productId);
+    const maxQty = product?.stock ?? qty;
+    setCart((prev) =>
+      prev
+        .map((item) =>
+          item.productId === productId ? { ...item, qty: Math.min(Math.max(0, qty), maxQty) } : item
+        )
+        .filter((item) => item.qty > 0)
+    );
+  };
+
+  const removeFromCart = (productId) => {
+    setCart((prev) => prev.filter((item) => item.productId !== productId));
+  };
+
   const checkout = async () => {
     if (cart.length === 0) return;
     if (!paymentForm.method) { setError("Please select a payment method"); return; }
+    if (!paymentForm.address.trim()) { setError("Please provide a delivery address"); return; }
     const res = await authFetch("/api/orders", {
       method: "POST",
-      body: JSON.stringify({ items: cart, paymentMethod: paymentForm.method, paymentDetails: paymentForm.details })
+      body: JSON.stringify({
+        items: cart,
+        paymentMethod: paymentForm.method,
+        paymentDetails: paymentForm.details,
+        shippingAddress: paymentForm.address.trim()
+      })
     });
     const data = await res.json();
     if (!res.ok) { setError(data.error || "Failed to place order"); return; }
+    if (data.user) setUser(data.user);
     if (paymentForm.method === "cod") {
-      setCart([]); setPaymentForm({ method: "upi", details: "" });
+      setCart([]);
+      setPaymentForm({ method: "upi", details: "", address: data.user?.savedAddress || paymentForm.address });
       setNotice(`Order placed with COD. Ref: ${data.payment.transactionRef}`);
-      fetchBootstrap(); return;
+      fetchBootstrap();
+      downloadInvoice(data.payment);
+      return;
     }
     setGatewayPayment(data.payment); setGatewayOpen(true); setGatewayResult("");
     setNotice(`Order created. Complete payment for ref: ${data.payment.transactionRef}`);
@@ -629,8 +672,13 @@ function App() {
     setGatewayBusy(false);
     if (!res.ok) { setGatewayResult("failed"); setError(data.error || "Payment processing failed"); return; }
     if (data.status === "success") {
-      setGatewayResult("success"); setCart([]); setPaymentForm({ method: "upi", details: "" });
-      setNotice(`Payment successful. Ref: ${data.transactionRef}`); fetchBootstrap(); return;
+      setGatewayResult("success");
+      setCart([]);
+      setPaymentForm((prev) => ({ method: "upi", details: "", address: prev.address }));
+      setNotice(`Payment successful. Ref: ${data.transactionRef}`);
+      fetchBootstrap();
+      downloadInvoice(data);
+      return;
     }
     setGatewayResult("failed");
     setError("Payment failed. Please retry.");
@@ -701,6 +749,25 @@ function App() {
 
         <DashboardMetrics cards={cards} user={user} loading={loading} />
 
+        <>
+            {role === "customer" && window.TC.CartCheckout && (
+              <window.TC.CartCheckout
+                cart={cart}
+                cartTotal={cartTotal}
+                paymentForm={paymentForm}
+                setPaymentForm={setPaymentForm}
+                checkout={checkout}
+                updateCartQty={updateCartQty}
+                removeFromCart={removeFromCart}
+                promotions={promotions}
+                payments={payments}
+                user={user}
+                money={money}
+                downloadInvoice={downloadInvoice}
+              />
+            )}
+        </>
+
         <CraftCatalog
           filteredProducts={filteredProducts}
           loading={loading}
@@ -719,20 +786,6 @@ function App() {
         />
 
         <>
-            {role === "customer" && rolePanelsReady && window.TC.CartCheckout && (
-              <window.TC.CartCheckout
-                cart={cart}
-                cartTotal={cartTotal}
-                paymentForm={paymentForm}
-                setPaymentForm={setPaymentForm}
-                checkout={checkout}
-                promotions={promotions}
-                payments={payments}
-                user={user}
-                money={money}
-                downloadInvoice={downloadInvoice}
-              />
-            )}
 
             {role === "artisan" && (
               <>
@@ -826,7 +879,7 @@ function App() {
               </>
             )}
 
-            {role === "customer" && rolePanelsReady && window.TC.ReviewsPanel && (
+            {role === "customer" && window.TC.ReviewsPanel && (
               <window.TC.ReviewsPanel
                 reviewForm={reviewForm}
                 setReviewForm={setReviewForm}

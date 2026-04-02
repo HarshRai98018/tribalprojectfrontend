@@ -25,6 +25,7 @@ const InvoicePage = ({ invoiceLoading, invoiceError, invoiceData, money }) => {
               <p>Method: {invoiceData.payment.method.toUpperCase()}</p>
               <p>Status: {invoiceData.payment.status}</p>
               <p>Ref: {invoiceData.payment.transactionRef}</p>
+              <p>Shipping Address: {invoiceData.order.shippingAddress}</p>
             </div>
 
             <table className="invoice-table">

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// PaymentGatewayModal — Simulated payment gateway overlay modal
+// PaymentGatewayModal - Simulated payment gateway overlay modal
 // ---------------------------------------------------------------------------
 const PaymentGatewayModal = ({
   gatewayPayment,
@@ -25,6 +25,10 @@ const PaymentGatewayModal = ({
           Ref: {gatewayPayment.transactionRef} | Amount: {money(gatewayPayment.amount)}
         </p>
         <p>Method: {gatewayPayment.method.toUpperCase()}</p>
+        <div className="gateway-demo-note">
+          <strong>Demo checkout</strong>
+          <p>This sample payment always succeeds so customers can finish the flow and download a receipt.</p>
+        </div>
 
         {gatewayPayment.method === "upi" && (
           <div className="upi-qr-card">
@@ -36,14 +40,34 @@ const PaymentGatewayModal = ({
           </div>
         )}
 
+        {gatewayPayment.method === "card" && (
+          <div className="upi-qr-card">
+            <div className="qr-matrix card-chip"></div>
+            <div>
+              <strong>Sample Card</strong>
+              <p>Use card ending 4242 for this demo payment.</p>
+            </div>
+          </div>
+        )}
+
+        {gatewayPayment.method === "netbanking" && (
+          <div className="upi-qr-card">
+            <div className="qr-matrix bank-badge"></div>
+            <div>
+              <strong>Sample Net Banking</strong>
+              <p>Any bank name entered in checkout works for this demo payment.</p>
+            </div>
+          </div>
+        )}
+
         {gatewayResult === "processing" && (
           <p className="gateway processing">Processing payment...</p>
         )}
         {gatewayResult === "success" && (
-          <p className="gateway success">✓ Payment successful!</p>
+          <p className="gateway success">Payment successful.</p>
         )}
         {gatewayResult === "failed" && (
-          <p className="gateway failed">✗ Payment failed. Please retry.</p>
+          <p className="gateway failed">Payment failed. Please retry.</p>
         )}
 
         <div className="gateway-actions">
@@ -53,7 +77,7 @@ const PaymentGatewayModal = ({
             onClick={processFakePayment}
             disabled={gatewayBusy || gatewayResult === "success"}
           >
-            {gatewayBusy ? "Processing..." : gatewayResult === "success" ? "Paid ✓" : "Pay Now"}
+            {gatewayBusy ? "Processing..." : gatewayResult === "success" ? "Paid" : "Pay Now"}
           </button>
           <button className="secondary" onClick={closeGateway}>
             Close

@@ -1,7 +1,20 @@
 // ---------------------------------------------------------------------------
 // AuthPage — Login / Signup with Google reCAPTCHA v2 support
 // ---------------------------------------------------------------------------
-const AuthPage = ({ authMode, authForm, error, onAuthInput, handleLogin, handleSignup, setAuthMode, SIGNUP_ROLES, captchaToken, onCaptcha, RECAPTCHA_SITE_KEY }) => {
+const AuthPage = ({
+  authMode,
+  authForm,
+  error,
+  backendWakeState,
+  onAuthInput,
+  handleLogin,
+  handleSignup,
+  setAuthMode,
+  SIGNUP_ROLES,
+  captchaToken,
+  onCaptcha,
+  RECAPTCHA_SITE_KEY
+}) => {
   const captchaRef = React.useRef(null);
   const widgetIdRef = React.useRef(null);
   const [captchaLoadError, setCaptchaLoadError] = React.useState("");
@@ -74,6 +87,17 @@ const AuthPage = ({ authMode, authForm, error, onAuthInput, handleLogin, handleS
             : "Sign up and choose your role to join the platform."}
         </p>
 
+        {backendWakeState !== "ready" && (
+          <div className="alert info">
+            Backend is waking up on the free tier. After your first request, please wait about 1 minute.
+            Once the CAPTCHA starts loading, the backend has started successfully.
+          </div>
+        )}
+        {backendWakeState === "ready" && (
+          <div className="alert success">
+            CAPTCHA is loading. The backend has started successfully and the page is ready to use.
+          </div>
+        )}
         {error && <div className="alert error">{error}</div>}
 
         <form onSubmit={authMode === "login" ? handleLogin : handleSignup}>

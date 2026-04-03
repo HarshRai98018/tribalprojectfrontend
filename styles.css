@@ -129,6 +129,11 @@ textarea {
   color: #125f43;
 }
 
+.alert.info {
+  background: #e7f0fb;
+  color: #174a7a;
+}
+
 /* Auth screen */
 .auth-page {
   min-height: 100vh;

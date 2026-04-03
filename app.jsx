@@ -113,6 +113,7 @@ function App() {
   const [authMode, setAuthMode] = useState("login");
   const [captchaToken, setCaptchaToken] = useState("");
   const [recaptchaSiteKey, setRecaptchaSiteKey] = useState("");
+  const [backendWakeState, setBackendWakeState] = useState("starting");
 
   const [authForm, setAuthForm] = useState({
     name: "",
@@ -280,16 +281,35 @@ function App() {
   useEffect(() => { hydrateUser(); }, []);
 
   useEffect(() => {
+    if (user) return undefined;
+
+    let active = true;
+    let timerId = null;
+
     const loadPublicConfig = async () => {
       try {
+        if (active) {
+          setBackendWakeState((prev) => (prev === "ready" ? prev : "starting"));
+        }
         const res = await apiFetch("/api/public/config");
-        if (!res.ok) return;
+        if (!res.ok) throw new Error("Backend not ready yet");
         const data = await res.json();
+        if (!active) return;
         setRecaptchaSiteKey(data.recaptchaSiteKey || "");
-      } catch { /* ignore */ }
+        setBackendWakeState("ready");
+      } catch {
+        if (!active) return;
+        setBackendWakeState("starting");
+        timerId = window.setTimeout(loadPublicConfig, 5000);
+      }
     };
     loadPublicConfig();
-  }, [apiFetch]);
+
+    return () => {
+      active = false;
+      if (timerId) window.clearTimeout(timerId);
+    };
+  }, [apiFetch, user]);
 
   useEffect(() => { if (user) fetchBootstrap(); }, [user]);
 
@@ -701,6 +721,7 @@ function App() {
         authMode={authMode}
         authForm={authForm}
         error={error}
+        backendWakeState={backendWakeState}
         onAuthInput={onAuthInput}
         handleLogin={handleLogin}
         handleSignup={handleSignup}

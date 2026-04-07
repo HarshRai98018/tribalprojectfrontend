@@ -1,0 +1,9 @@
+{
+  "name": "tribalcraft-frontend",
+  "version": "1.0.0",
+  "description": "CDN-based Frontend for TribalCraft",
+  "scripts": {
+    "dev": "npx -y serve -s . -l 5173"
+  },
+  "dependencies": {}
+}

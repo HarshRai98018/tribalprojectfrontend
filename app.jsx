@@ -1,4 +1,5 @@
 const { useEffect, useMemo, useState, useCallback } = React;
+const { BrowserRouter, Routes, Route, Link, useNavigate, useLocation, Navigate } = window.ReactRouterDOM;
 
 // ---------------------------------------------------------------------------
 // Set this to your Render backend URL for production deployment
@@ -99,8 +100,10 @@ async function readJsonSafe(response) {
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
-function App() {
-  const isInvoiceRoute = window.location.pathname === "/invoice";
+function AppContent() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isInvoiceRoute = location.pathname === "/invoice";
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -714,7 +717,7 @@ function App() {
   if (!user) {
     if (!authPageReady) return <div className="alert">Loading...</div>;
     const AuthPage = window.TC.AuthPage;
-    return (
+    const authUI = (
       <AuthPage
         authMode={authMode}
         authForm={authForm}
@@ -729,6 +732,11 @@ function App() {
         onCaptcha={setCaptchaToken}
         RECAPTCHA_SITE_KEY={recaptchaSiteKey}
       />
+    );
+    return (
+      <Routes>
+        <Route path="*" element={authUI} />
+      </Routes>
     );
   }
 
@@ -758,156 +766,133 @@ function App() {
   const CraftCatalog = window.TC.CraftCatalog;
   const PaymentGatewayModal = window.TC.PaymentGatewayModal;
 
+  const navLinks = (
+    <nav className="navbar" style={{ padding: '10px', background: '#eee', marginBottom: '10px', display: 'flex', gap: '15px' }}>
+      <Link to="/">Home & Catalog</Link>
+      {role === "customer" && <Link to="/cart">Cart</Link>}
+      {role === "customer" && <Link to="/reviews">Reviews</Link>}
+      {role === "artisan" && <Link to="/artisan">Artisan Panel</Link>}
+      {(role === "artisan" || role === "admin") && <Link to="/admin">Admin Panel</Link>}
+      {(role === "consultant" || role === "admin") && <Link to="/consultant">Consultant Panel</Link>}
+      <button onClick={logout} style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: '#e74c3c', fontWeight: 'bold', cursor: 'pointer', padding: '0 10px' }}>Logout</button>
+    </nav>
+  );
+
   return (
     <div className="page">
       <HeroBanner heroClass={heroClass} user={user} logout={logout} />
+      {navLinks}
 
       <main className="container">
         {notice && <div className="alert success">{notice}</div>}
         {error && <div className="alert error">{error}</div>}
 
-        <DashboardMetrics cards={cards} user={user} loading={loading} />
 
-        <>
-            {role === "customer" && window.TC.CartCheckout && (
-              <window.TC.CartCheckout
-                cart={cart}
-                cartTotal={cartTotal}
-                paymentForm={paymentForm}
-                setPaymentForm={setPaymentForm}
-                checkout={checkout}
-                updateCartQty={updateCartQty}
-                removeFromCart={removeFromCart}
-                promotions={promotions}
-                payments={payments}
-                user={user}
-                money={money}
-                downloadInvoice={downloadInvoice}
-              />
-            )}
-        </>
-
-        <CraftCatalog
-          filteredProducts={filteredProducts}
-          loading={loading}
-          query={query}
-          setQuery={setQuery}
-          category={category}
-          setCategory={setCategory}
-          categories={categories}
-          role={role}
-          addToCart={addToCart}
-          updateAuth={updateAuth}
-          deleteProduct={deleteProduct}
-          money={money}
-          DEFAULT_PRODUCT_IMAGE={DEFAULT_PRODUCT_IMAGE}
-          AUTH_STATUSES={AUTH_STATUSES}
-        />
-
-        <>
-
-            {role === "artisan" && (
+        
+          <Routes>
+            <Route path="/" element={
               <>
-                {window.TC.ArtisanPanel ? (
-                  <window.TC.ArtisanPanel
-                    newListing={newListing}
-                    setNewListing={setNewListing}
-                    listingImageFile={listingImageFile}
-                    setListingImageFile={setListingImageFile}
-                    createListing={createListing}
-                    orders={orders}
-                    money={money}
-                  />
-                ) : (
-                  <div className="panel">
-                    <div className="panel-head">
-                      <h2>Loading artisan tools...</h2>
-                      <p>Please wait while the upload form loads.</p>
-                    </div>
-                  </div>
-                )}
-                {rolePanelsReady && window.TC.AdminPanel && (
-                  <window.TC.AdminPanel
-                    products={products}
-                    orders={orders}
-                    updateOrderStatus={updateOrderStatus}
-                    ORDER_STATUSES={ORDER_STATUSES}
-                    issues={issues}
-                    issueForm={issueForm}
-                    setIssueForm={setIssueForm}
-                    submitIssue={submitIssue}
-                    resolveIssue={resolveIssue}
-                    payments={payments}
-                    updatePaymentStatus={updatePaymentStatus}
-                    activityLogs={activityLogs}
-                    money={money}
-                    downloadInvoice={downloadInvoice}
-                    role={role}
-                  />
-                )}
+                <DashboardMetrics cards={cards} user={user} loading={loading} />
+                <CraftCatalog
+                  filteredProducts={filteredProducts}
+                  loading={loading}
+                  query={query}
+                  setQuery={setQuery}
+                  category={category}
+                  setCategory={setCategory}
+                  categories={categories}
+                  role={role}
+                  addToCart={addToCart}
+                  updateAuth={updateAuth}
+                  deleteProduct={deleteProduct}
+                  money={money}
+                  DEFAULT_PRODUCT_IMAGE={DEFAULT_PRODUCT_IMAGE}
+                  AUTH_STATUSES={AUTH_STATUSES}
+                />
               </>
-            )}
+            } />
+            
+            <Route path="/cart" element={
+              role === "customer" && window.TC.CartCheckout ? (
+                <window.TC.CartCheckout
+                  cart={cart}
+                  cartTotal={cartTotal}
+                  paymentForm={paymentForm}
+                  setPaymentForm={setPaymentForm}
+                  checkout={checkout}
+                  updateCartQty={updateCartQty}
+                  removeFromCart={removeFromCart}
+                  promotions={promotions}
+                  payments={payments}
+                  user={user}
+                  money={money}
+                  downloadInvoice={downloadInvoice}
+                />
+              ) : <Navigate to="/" />
+            } />
 
-            {role === "consultant" && rolePanelsReady && window.TC.ConsultantPanel && (
-              <window.TC.ConsultantPanel
-                products={products}
-                updateAuth={updateAuth}
-                AUTH_STATUSES={AUTH_STATUSES}
-              />
-            )}
+            <Route path="/artisan" element={
+              (role === "artisan" || role === "admin") && window.TC.ArtisanPanel ? (
+                <window.TC.ArtisanPanel
+                  newListing={newListing}
+                  setNewListing={setNewListing}
+                  listingImageFile={listingImageFile}
+                  setListingImageFile={setListingImageFile}
+                  createListing={createListing}
+                  orders={orders}
+                  money={money}
+                />
+              ) : <Navigate to="/" />
+            } />
 
-            {role === "admin" && rolePanelsReady && (
-              <>
-                {window.TC.ArtisanPanel && (
-                  <window.TC.ArtisanPanel
-                    newListing={newListing}
-                    setNewListing={setNewListing}
-                    listingImageFile={listingImageFile}
-                    setListingImageFile={setListingImageFile}
-                    createListing={createListing}
-                    orders={orders}
-                    money={money}
-                  />
-                )}
-                {window.TC.ConsultantPanel && (
-                  <window.TC.ConsultantPanel
-                    products={products}
-                    updateAuth={updateAuth}
-                    AUTH_STATUSES={AUTH_STATUSES}
-                  />
-                )}
-                {window.TC.AdminPanel && (
-                  <window.TC.AdminPanel
-                    products={products}
-                    orders={orders}
-                    updateOrderStatus={updateOrderStatus}
-                    ORDER_STATUSES={ORDER_STATUSES}
-                    issues={issues}
-                    issueForm={issueForm}
-                    setIssueForm={setIssueForm}
-                    submitIssue={submitIssue}
-                    resolveIssue={resolveIssue}
-                    payments={payments}
-                    updatePaymentStatus={updatePaymentStatus}
-                    activityLogs={activityLogs}
-                    money={money}
-                    downloadInvoice={downloadInvoice}
-                    role={role}
-                  />
-                )}
-              </>
-            )}
+            <Route path="/admin" element={
+              (role === "artisan" || role === "admin") && rolePanelsReady && window.TC.AdminPanel ? (
+                <window.TC.AdminPanel
+                  products={products}
+                  orders={orders}
+                  updateOrderStatus={updateOrderStatus}
+                  ORDER_STATUSES={ORDER_STATUSES}
+                  issues={issues}
+                  issueForm={issueForm}
+                  setIssueForm={setIssueForm}
+                  submitIssue={submitIssue}
+                  resolveIssue={resolveIssue}
+                  payments={payments}
+                  updatePaymentStatus={updatePaymentStatus}
+                  activityLogs={activityLogs}
+                  money={money}
+                  downloadInvoice={downloadInvoice}
+                  role={role}
+                />
+              ) : <Navigate to="/" />
+            } />
 
-            {role === "customer" && window.TC.ReviewsPanel && (
-              <window.TC.ReviewsPanel
-                reviewForm={reviewForm}
-                setReviewForm={setReviewForm}
-                submitReview={submitReview}
-                products={products}
-                reviews={reviews}
-              />
-            )}
-        </>
+            <Route path="/consultant" element={
+              (role === "consultant" || role === "admin") && rolePanelsReady && window.TC.ConsultantPanel ? (
+                <window.TC.ConsultantPanel
+                  products={products}
+                  updateAuth={updateAuth}
+                  AUTH_STATUSES={AUTH_STATUSES}
+                />
+              ) : <Navigate to="/" />
+            } />
+
+            <Route path="/reviews" element={
+              role === "customer" && window.TC.ReviewsPanel ? (
+                <window.TC.ReviewsPanel
+                  reviewForm={reviewForm}
+                  setReviewForm={setReviewForm}
+                  submitReview={submitReview}
+                  products={products}
+                  reviews={reviews}
+                />
+              ) : <Navigate to="/" />
+             } />
+             
+             <Route path="*" element={<Navigate to="/" />} />
+          </Routes>
+
+
       </main>
 
       {gatewayOpen && gatewayPayment && (
@@ -926,4 +911,9 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+const RouterComponent = BrowserRouter;
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <RouterComponent>
+    <AppContent />
+  </RouterComponent>
+);

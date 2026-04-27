@@ -42,6 +42,9 @@ const SIGNUP_ROLES = [
 ];
 const DEFAULT_PRODUCT_IMAGE =
   "https://images.unsplash.com/photo-1459908676235-d5f02a50184b?auto=format&fit=crop&w=800&q=70";
+const API_REQUEST_TIMEOUT_MS = 12000;
+const API_RETRY_DELAY_MS = 1200;
+const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 const money = (value) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(
@@ -67,7 +70,13 @@ function loadComponent(scriptPath) {
   if (_loadCache[scriptPath]) return _loadCache[scriptPath];
 
   _loadCache[scriptPath] = new Promise((resolve, reject) => {
-    fetch(scriptPath)
+    fetch(scriptPath, {
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache"
+      }
+    })
       .then((res) => {
         if (!res.ok) throw new Error(`Failed to fetch ${scriptPath}`);
         return res.text();
@@ -97,6 +106,31 @@ async function readJsonSafe(response) {
   }
 }
 
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function withTimeout(fetcher, timeoutMs = API_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(new Error("Request timed out")), timeoutMs);
+  return fetcher(controller.signal).finally(() => window.clearTimeout(timer));
+}
+
+function isApiHtmlFallback(path, response) {
+  if (!path.startsWith("/api/")) return false;
+  const contentType = (response.headers.get("content-type") || "").toLowerCase();
+  return contentType.includes("text/html");
+}
+
+function shouldRetryRequest(method, response, error, attempt) {
+  const normalizedMethod = (method || "GET").toUpperCase();
+  if (!["GET", "HEAD"].includes(normalizedMethod)) return false;
+  if (attempt >= 1) return false;
+  if (error) return true;
+  if (!response) return false;
+  return RETRYABLE_STATUS_CODES.has(response.status);
+}
+
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
@@ -108,6 +142,7 @@ function AppContent() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_API_BASE_URL);
+  const [bootstrapState, setBootstrapState] = useState("idle");
 
   const [token, setToken] = useState(localStorage.getItem("tc_token") || "");
   const [user, setUser] = useState(null);
@@ -175,6 +210,7 @@ function AppContent() {
     async (path, options = {}) => {
       const normalizedPath = path.startsWith("/") ? path : `/${path}`;
       const { protocol, hostname } = window.location;
+      const method = (options.method || "GET").toUpperCase();
       const candidates = [];
       const seen = new Set();
       const push = (base) => {
@@ -195,21 +231,64 @@ function AppContent() {
       push("");
 
       let lastError = null;
+      let lastResponse = null;
+      let sawFallbackResponse = false;
       for (const base of candidates) {
-        try {
-          const response = await fetch(base + normalizedPath, options);
-          // When frontend runs on a static dev server, /api/* often returns 404 there.
-          // Keep searching until we hit the actual backend.
-          if (normalizedPath.startsWith("/api/") && response.status === 404) continue;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            const headers = { Accept: "application/json", ...(options.headers || {}) };
+            if (normalizedPath.startsWith("/api/")) {
+              headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+              headers.Pragma = "no-cache";
+            }
 
-          if (base !== apiBaseUrl) setApiBaseUrl(base);
-          return response;
-        } catch (err) {
-          lastError = err;
+            const response = await withTimeout((signal) =>
+              fetch(base + normalizedPath, {
+                ...options,
+                headers,
+                cache: normalizedPath.startsWith("/api/") ? "no-store" : options.cache,
+                signal
+              })
+            );
+
+            // On static hosts, rewritten /api/* requests can return index.html with HTTP 200.
+            // Skip those false positives and keep probing real backend candidates.
+            if (
+              normalizedPath.startsWith("/api/") &&
+              (response.status === 404 || isApiHtmlFallback(normalizedPath, response))
+            ) {
+              sawFallbackResponse = true;
+              break;
+            }
+
+            if (shouldRetryRequest(method, response, null, attempt)) {
+              lastResponse = response;
+              await delay(API_RETRY_DELAY_MS);
+              continue;
+            }
+
+            if (base !== apiBaseUrl) {
+              setApiBaseUrl(base);
+              try {
+                window.localStorage.setItem("TC_API_BASE_URL", base);
+              } catch {
+                // ignore storage failures
+              }
+            }
+            return response;
+          } catch (err) {
+            lastError = err?.name === "AbortError" ? new Error("Request timed out") : err;
+            if (!shouldRetryRequest(method, null, err, attempt)) break;
+            await delay(API_RETRY_DELAY_MS);
+          }
         }
       }
 
+      if (lastResponse) return lastResponse;
       if (lastError) throw lastError;
+      if (sawFallbackResponse) {
+        throw new Error("API endpoint was not found on the current host. Check the backend base URL.");
+      }
       throw new Error("Unable to reach backend");
     },
     [apiBaseUrl]
@@ -242,10 +321,11 @@ function AppContent() {
     }
   }, [token, authFetch]);
 
-  const fetchBootstrap = useCallback(async () => {
+  const fetchBootstrap = useCallback(async ({ silent = false } = {}) => {
     if (!token) return;
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
+      setBootstrapState("loading");
       const res = await authFetch("/api/bootstrap");
       if (!res.ok) throw new Error("Failed to fetch platform data");
       const data = await res.json();
@@ -258,10 +338,12 @@ function AppContent() {
       setActivityLogs(data.activityLogs || []);
       setMetrics(data.metrics || {});
       setError("");
+      setBootstrapState("ready");
     } catch (err) {
+      setBootstrapState("error");
       setError(err.message || "Something went wrong");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [token, authFetch]);
 
@@ -275,6 +357,10 @@ function AppContent() {
       setProducts(Array.isArray(data) ? data : (data.products || []));
     } catch { /* silent — optimistic update already applied */ }
   }, [token, authFetch]);
+
+  const refreshDashboard = useCallback(() => {
+    fetchBootstrap({ silent: true });
+  }, [fetchBootstrap]);
 
   // ---------------------------------------------------------------------------
   // Effects
@@ -315,6 +401,14 @@ function AppContent() {
   useEffect(() => { if (user) fetchBootstrap(); }, [user]);
 
   useEffect(() => {
+    if (!user || bootstrapState !== "error") return undefined;
+    const retryTimer = window.setTimeout(() => {
+      fetchBootstrap();
+    }, 2500);
+    return () => window.clearTimeout(retryTimer);
+  }, [bootstrapState, fetchBootstrap, user]);
+
+  useEffect(() => {
     setPaymentForm((prev) => ({
       ...prev,
       address: user?.savedAddress || prev.address || ""
@@ -327,13 +421,18 @@ function AppContent() {
     if (!paymentId) { setInvoiceError("Missing paymentId in invoice URL"); return; }
 
     const loadInvoice = async () => {
-      setInvoiceLoading(true);
-      setInvoiceError("");
-      const res = await authFetch(`/api/payments/${paymentId}/invoice`);
-      const data = await res.json();
-      setInvoiceLoading(false);
-      if (!res.ok) { setInvoiceError(data.error || "Failed to load invoice"); return; }
-      setInvoiceData(data);
+      try {
+        setInvoiceLoading(true);
+        setInvoiceError("");
+        const res = await authFetch(`/api/payments/${paymentId}/invoice`);
+        const data = await readJsonSafe(res);
+        if (!res.ok) { setInvoiceError(data.error || "Failed to load invoice"); return; }
+        setInvoiceData(data);
+      } catch (err) {
+        setInvoiceError(err.message || "Failed to load invoice");
+      } finally {
+        setInvoiceLoading(false);
+      }
     };
     loadInvoice();
   }, [user, isInvoiceRoute]);
@@ -454,8 +553,8 @@ function AppContent() {
       setCaptchaToken("");
       setError("");
       setNotice(`Welcome, ${data.user.name}`);
-    } catch {
-      setError("Unable to reach backend. Start backend and check API base URL.");
+    } catch (err) {
+      setError(err.message || "Unable to reach backend. Start backend and check API base URL.");
     }
   };
 
@@ -481,8 +580,8 @@ function AppContent() {
       setUser(data.user);
       setError("");
       setNotice(`Account created for ${data.user.name}`);
-    } catch {
-      setError("Unable to reach backend. Start backend and check API base URL.");
+    } catch (err) {
+      setError(err.message || "Unable to reach backend. Start backend and check API base URL.");
     }
   };
 
@@ -532,91 +631,108 @@ function AppContent() {
     if (cart.length === 0) return;
     if (!paymentForm.method) { setError("Please select a payment method"); return; }
     if (!paymentForm.address.trim()) { setError("Please provide a delivery address"); return; }
-    const res = await authFetch("/api/orders", {
-      method: "POST",
-      body: JSON.stringify({
-        items: cart,
-        paymentMethod: paymentForm.method,
-        paymentDetails: paymentForm.details,
-        shippingAddress: paymentForm.address.trim()
-      })
-    });
-    const data = await res.json();
-    if (!res.ok) { setError(data.error || "Failed to place order"); return; }
-    if (data.user) setUser(data.user);
-    if (paymentForm.method === "cod") {
-      setCart([]);
-      setPaymentForm({ method: "upi", details: "", address: data.user?.savedAddress || paymentForm.address });
-      setNotice(`Order placed with COD. Ref: ${data.payment.transactionRef}`);
-      fetchBootstrap();
-      downloadInvoice(data.payment);
-      return;
+    try {
+      const res = await authFetch("/api/orders", {
+        method: "POST",
+        body: JSON.stringify({
+          items: cart,
+          paymentMethod: paymentForm.method,
+          paymentDetails: paymentForm.details,
+          shippingAddress: paymentForm.address.trim()
+        })
+      });
+      const data = await readJsonSafe(res);
+      if (!res.ok) { setError(data.error || "Failed to place order"); return; }
+      if (data.user) setUser(data.user);
+      if (data.order) setOrders((prev) => [data.order, ...prev]);
+      if (data.payment) setPayments((prev) => [data.payment, ...prev]);
+      if (paymentForm.method === "cod") {
+        setCart([]);
+        setPaymentForm({ method: "upi", details: "", address: data.user?.savedAddress || paymentForm.address });
+        setNotice(`Order placed with COD. Ref: ${data.payment.transactionRef}`);
+        refreshDashboard();
+        downloadInvoice(data.payment);
+        return;
+      }
+      setGatewayPayment(data.payment); setGatewayOpen(true); setGatewayResult("");
+      setNotice(`Order created. Complete payment for ref: ${data.payment.transactionRef}`);
+    } catch (err) {
+      setError(err.message || "Checkout failed. Please try again.");
     }
-    setGatewayPayment(data.payment); setGatewayOpen(true); setGatewayResult("");
-    setNotice(`Order created. Complete payment for ref: ${data.payment.transactionRef}`);
   };
 
   const createListing = async (event) => {
     event.preventDefault();
-    const payload = { ...newListing };
-    if (!payload.artisanName) payload.artisanName = user.name;
-    const res = await authFetch("/api/products", { method: "POST", body: JSON.stringify(payload) });
-    const data = await res.json();
-    if (!res.ok) { setError(data.error || "Could not create listing"); return; }
+    try {
+      const payload = { ...newListing };
+      if (!payload.artisanName) payload.artisanName = user.name;
+      const res = await authFetch("/api/products", { method: "POST", body: JSON.stringify(payload) });
+      const data = await readJsonSafe(res);
+      if (!res.ok) { setError(data.error || "Could not create listing"); return; }
 
-    // ── Optimistic insert: show the new product card instantly ──
-    const optimisticProduct = { ...data, imageUrl: "" };
-    setProducts((prev) => [optimisticProduct, ...prev]);
+      // Optimistic insert: show the new product card instantly
+      const optimisticProduct = { ...data, imageUrl: "" };
+      setProducts((prev) => [optimisticProduct, ...prev]);
 
-    setNewListing({ name: "", category: "Painting", price: "", stock: "", artisanName: user.name || "", region: "", imageUrl: "", description: "", culturalNote: "" });
-    setListingImageFile(null);
+      setNewListing({ name: "", category: "Painting", price: "", stock: "", artisanName: user.name || "", region: "", imageUrl: "", description: "", culturalNote: "" });
+      setListingImageFile(null);
 
-    if (listingImageFile) {
-      const uploadData = new FormData();
-      uploadData.append("file", listingImageFile);
-      const uploadHeaders = {};
-      if (token) uploadHeaders.Authorization = `Bearer ${token}`;
-      const uploadRes = await apiFetch(`/api/products/${encodeURIComponent(data.id)}/upload-image`, {
-        method: "POST", headers: uploadHeaders, body: uploadData
-      });
-      const uploadJson = await uploadRes.json();
-      if (!uploadRes.ok) {
-        setError(uploadJson.error || "Listing created, but image upload failed");
-        setNotice(`Listing published: ${data.name}`);
-        // Refresh just products to get server state
-        fetchProducts();
+      if (listingImageFile) {
+        const uploadData = new FormData();
+        uploadData.append("file", listingImageFile);
+        const uploadHeaders = {};
+        if (token) uploadHeaders.Authorization = `Bearer ${token}`;
+        const uploadRes = await apiFetch(`/api/products/${encodeURIComponent(data.id)}/upload-image`, {
+          method: "POST", headers: uploadHeaders, body: uploadData
+        });
+        const uploadJson = await readJsonSafe(uploadRes);
+        if (!uploadRes.ok) {
+          setError(uploadJson.error || "Listing created, but image upload failed");
+          setNotice(`Listing published: ${data.name}`);
+          // Refresh just products to get server state
+          fetchProducts();
+        } else {
+          setNotice(`Listing published with image: ${data.name}`);
+          // Patch the optimistic entry with the real imageUrl returned by server
+          setProducts((prev) =>
+            prev.map((p) => (p.id === data.id ? { ...p, imageUrl: uploadJson.imageUrl || uploadJson.image_url || p.imageUrl } : p))
+          );
+        }
       } else {
-        setNotice(`Listing published with image: ${data.name}`);
-        // Patch the optimistic entry with the real imageUrl returned by server
-        setProducts((prev) =>
-          prev.map((p) => (p.id === data.id ? { ...p, imageUrl: uploadJson.imageUrl || uploadJson.image_url || p.imageUrl } : p))
-        );
+        setNotice(`Listing published: ${data.name}`);
       }
-    } else {
-      setNotice(`Listing published: ${data.name}`);
+    } catch (err) {
+      setError(err.message || "Could not create listing");
     }
   };
 
   const updateAuth = async (productId, authenticityStatus) => {
+    const previousStatus = products.find((product) => product.id === productId)?.authenticityStatus;
     // Optimistic update: flip badge immediately
     setProducts((prev) =>
       prev.map((p) => (p.id === productId ? { ...p, authenticityStatus } : p))
     );
-    const res = await authFetch(`/api/products/${productId}/authenticity`, { method: "PATCH", body: JSON.stringify({ authenticityStatus }) });
-    const data = await res.json();
-    if (!res.ok) {
-      // Revert on failure
+    try {
+      const res = await authFetch(`/api/products/${productId}/authenticity`, { method: "PATCH", body: JSON.stringify({ authenticityStatus }) });
+      const data = await readJsonSafe(res);
+      if (!res.ok) {
+        setProducts((prev) =>
+          prev.map((p) => (p.id === productId ? { ...p, authenticityStatus: previousStatus } : p))
+        );
+        setError(data.error || "Unable to update authenticity status");
+        return;
+      }
+      // Confirm with server's response value
       setProducts((prev) =>
-        prev.map((p) => (p.id === productId ? { ...p, authenticityStatus: p._prevStatus } : p))
+        prev.map((p) => (p.id === productId ? { ...p, authenticityStatus: data.authenticityStatus } : p))
       );
-      setError(data.error || "Unable to update authenticity status");
-      return;
+      setNotice(`Authenticity set to ${data.authenticityStatus}`);
+    } catch (err) {
+      setProducts((prev) =>
+        prev.map((p) => (p.id === productId ? { ...p, authenticityStatus: previousStatus } : p))
+      );
+      setError(err.message || "Unable to update authenticity status");
     }
-    // Confirm with server's response value
-    setProducts((prev) =>
-      prev.map((p) => (p.id === productId ? { ...p, authenticityStatus: data.authenticityStatus } : p))
-    );
-    setNotice(`Authenticity set to ${data.authenticityStatus}`);
   };
 
   const deleteProduct = async (productId, productName) => {
@@ -641,69 +757,102 @@ function AppContent() {
   };
 
   const updateOrderStatus = async (orderId, status) => {
-    const res = await authFetch(`/api/orders/${orderId}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
-    const data = await res.json();
-    if (!res.ok) { setError(data.error || "Unable to update order status"); return; }
-    setNotice(`Order moved to ${data.status}`);
-    fetchBootstrap();
+    try {
+      const res = await authFetch(`/api/orders/${orderId}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+      const data = await readJsonSafe(res);
+      if (!res.ok) { setError(data.error || "Unable to update order status"); return; }
+      setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status: data.status } : order)));
+      setNotice(`Order moved to ${data.status}`);
+      refreshDashboard();
+    } catch (err) {
+      setError(err.message || "Unable to update order status");
+    }
   };
 
   const submitReview = async (event) => {
     event.preventDefault();
-    const res = await authFetch("/api/reviews", { method: "POST", body: JSON.stringify(reviewForm) });
-    const data = await res.json();
-    if (!res.ok) { setError(data.error || "Failed to submit review"); return; }
-    setNotice("Review submitted");
-    setReviewForm({ productId: "", rating: 5, comment: "" });
-    fetchBootstrap();
+    try {
+      const res = await authFetch("/api/reviews", { method: "POST", body: JSON.stringify(reviewForm) });
+      const data = await readJsonSafe(res);
+      if (!res.ok) { setError(data.error || "Failed to submit review"); return; }
+      setReviews((prev) => [data, ...prev]);
+      setNotice("Review submitted");
+      setReviewForm({ productId: "", rating: 5, comment: "" });
+      fetchProducts();
+    } catch (err) {
+      setError(err.message || "Failed to submit review");
+    }
   };
 
   const submitIssue = async (event) => {
     event.preventDefault();
-    const res = await authFetch("/api/issues", { method: "POST", body: JSON.stringify(issueForm) });
-    const data = await res.json();
-    if (!res.ok) { setError(data.error || "Failed to create issue"); return; }
-    setIssueForm({ type: "delivery", message: "" });
-    setNotice("Issue reported");
-    fetchBootstrap();
+    try {
+      const res = await authFetch("/api/issues", { method: "POST", body: JSON.stringify(issueForm) });
+      const data = await readJsonSafe(res);
+      if (!res.ok) { setError(data.error || "Failed to create issue"); return; }
+      setIssues((prev) => [data, ...prev]);
+      setIssueForm({ type: "delivery", message: "" });
+      setNotice("Issue reported");
+      refreshDashboard();
+    } catch (err) {
+      setError(err.message || "Failed to create issue");
+    }
   };
 
   const resolveIssue = async (issueId) => {
-    const res = await authFetch(`/api/issues/${issueId}/resolve`, { method: "PATCH" });
-    const data = await res.json();
-    if (!res.ok) { setError(data.error || "Could not resolve issue"); return; }
-    setNotice(`Issue ${data.id} resolved`);
-    fetchBootstrap();
+    try {
+      const res = await authFetch(`/api/issues/${issueId}/resolve`, { method: "PATCH" });
+      const data = await readJsonSafe(res);
+      if (!res.ok) { setError(data.error || "Could not resolve issue"); return; }
+      setIssues((prev) => prev.map((issue) => (issue.id === issueId ? { ...issue, status: data.status } : issue)));
+      setNotice(`Issue ${data.id} resolved`);
+      refreshDashboard();
+    } catch (err) {
+      setError(err.message || "Could not resolve issue");
+    }
   };
 
   const updatePaymentStatus = async (paymentId, status) => {
-    const res = await authFetch(`/api/payments/${paymentId}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
-    const data = await res.json();
-    if (!res.ok) { setError(data.error || "Could not update payment status"); return; }
-    setNotice(`Payment ${data.id} marked ${data.status}`);
-    fetchBootstrap();
+    try {
+      const res = await authFetch(`/api/payments/${paymentId}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+      const data = await readJsonSafe(res);
+      if (!res.ok) { setError(data.error || "Could not update payment status"); return; }
+      setPayments((prev) => prev.map((payment) => (payment.id === paymentId ? { ...payment, status: data.status } : payment)));
+      setNotice(`Payment ${data.id} marked ${data.status}`);
+      refreshDashboard();
+    } catch (err) {
+      setError(err.message || "Could not update payment status");
+    }
   };
 
   const processFakePayment = async () => {
     if (!gatewayPayment) return;
-    setGatewayBusy(true); setGatewayResult("processing"); setError("");
-    await new Promise((resolve) => setTimeout(resolve, 1400));
-    const res = await authFetch(`/api/payments/${gatewayPayment.id}/process`, { method: "POST", body: JSON.stringify({}) });
-    const data = await res.json();
-    setGatewayBusy(false);
-    if (!res.ok) { setGatewayResult("failed"); setError(data.error || "Payment processing failed"); return; }
-    if (data.status === "success") {
-      setGatewayResult("success");
-      setCart([]);
-      setPaymentForm((prev) => ({ method: "upi", details: "", address: prev.address }));
-      setNotice(`Payment successful. Ref: ${data.transactionRef}`);
-      fetchBootstrap();
-      downloadInvoice(data);
-      return;
+    try {
+      setGatewayBusy(true); setGatewayResult("processing"); setError("");
+      await new Promise((resolve) => setTimeout(resolve, 1400));
+      const res = await authFetch(`/api/payments/${gatewayPayment.id}/process`, { method: "POST", body: JSON.stringify({}) });
+      const data = await readJsonSafe(res);
+      if (!res.ok) { setGatewayResult("failed"); setError(data.error || "Payment processing failed"); return; }
+      if (data.status === "success") {
+        setGatewayResult("success");
+        setCart([]);
+        setPaymentForm((prev) => ({ method: "upi", details: "", address: prev.address }));
+        setPayments((prev) => prev.map((payment) => (payment.id === gatewayPayment.id ? { ...payment, ...data } : payment)));
+        setOrders((prev) => prev.map((order) => (order.id === data.orderId ? { ...order, status: "processing" } : order)));
+        setNotice(`Payment successful. Ref: ${data.transactionRef}`);
+        refreshDashboard();
+        downloadInvoice(data);
+        return;
+      }
+      setGatewayResult("failed");
+      setError("Payment failed. Please retry.");
+      refreshDashboard();
+    } catch (err) {
+      setGatewayResult("failed");
+      setError(err.message || "Payment processing failed");
+    } finally {
+      setGatewayBusy(false);
     }
-    setGatewayResult("failed");
-    setError("Payment failed. Please retry.");
-    fetchBootstrap();
   };
 
   const downloadInvoice = (payment) => {
@@ -765,6 +914,7 @@ function AppContent() {
   const DashboardMetrics = window.TC.DashboardMetrics;
   const CraftCatalog = window.TC.CraftCatalog;
   const PaymentGatewayModal = window.TC.PaymentGatewayModal;
+  const routeLoadingFallback = <div className="alert info">Loading this section...</div>;
 
   const navLinks = (
     <nav className="navbar" style={{ padding: '10px', background: '#eee', marginBottom: '10px', display: 'flex', gap: '15px' }}>
@@ -786,6 +936,12 @@ function AppContent() {
       <main className="container">
         {notice && <div className="alert success">{notice}</div>}
         {error && <div className="alert error">{error}</div>}
+        {bootstrapState === "loading" && <div className="alert info">Loading the latest dashboard data...</div>}
+        {bootstrapState === "error" && (
+          <div className="alert info">
+            Backend data is still syncing. Retrying automatically, so you should not need to refresh again.
+          </div>
+        )}
 
 
         
@@ -813,7 +969,7 @@ function AppContent() {
             } />
             
             <Route path="/cart" element={
-              role === "customer" && window.TC.CartCheckout ? (
+              role !== "customer" ? <Navigate to="/" /> : window.TC.CartCheckout ? (
                 <window.TC.CartCheckout
                   cart={cart}
                   cartTotal={cartTotal}
@@ -828,11 +984,11 @@ function AppContent() {
                   money={money}
                   downloadInvoice={downloadInvoice}
                 />
-              ) : <Navigate to="/" />
+              ) : routeLoadingFallback
             } />
 
             <Route path="/artisan" element={
-              (role === "artisan" || role === "admin") && window.TC.ArtisanPanel ? (
+              !(role === "artisan" || role === "admin") ? <Navigate to="/" /> : window.TC.ArtisanPanel ? (
                 <window.TC.ArtisanPanel
                   newListing={newListing}
                   setNewListing={setNewListing}
@@ -842,11 +998,11 @@ function AppContent() {
                   orders={orders}
                   money={money}
                 />
-              ) : <Navigate to="/" />
+              ) : routeLoadingFallback
             } />
 
             <Route path="/admin" element={
-              (role === "artisan" || role === "admin") && rolePanelsReady && window.TC.AdminPanel ? (
+              !(role === "artisan" || role === "admin") ? <Navigate to="/" /> : rolePanelsReady && window.TC.AdminPanel ? (
                 <window.TC.AdminPanel
                   products={products}
                   orders={orders}
@@ -864,21 +1020,21 @@ function AppContent() {
                   downloadInvoice={downloadInvoice}
                   role={role}
                 />
-              ) : <Navigate to="/" />
+              ) : routeLoadingFallback
             } />
 
             <Route path="/consultant" element={
-              (role === "consultant" || role === "admin") && rolePanelsReady && window.TC.ConsultantPanel ? (
+              !(role === "consultant" || role === "admin") ? <Navigate to="/" /> : rolePanelsReady && window.TC.ConsultantPanel ? (
                 <window.TC.ConsultantPanel
                   products={products}
                   updateAuth={updateAuth}
                   AUTH_STATUSES={AUTH_STATUSES}
                 />
-              ) : <Navigate to="/" />
+              ) : routeLoadingFallback
             } />
 
             <Route path="/reviews" element={
-              role === "customer" && window.TC.ReviewsPanel ? (
+              role !== "customer" ? <Navigate to="/" /> : window.TC.ReviewsPanel ? (
                 <window.TC.ReviewsPanel
                   reviewForm={reviewForm}
                   setReviewForm={setReviewForm}
@@ -886,7 +1042,7 @@ function AppContent() {
                   products={products}
                   reviews={reviews}
                 />
-              ) : <Navigate to="/" />
+              ) : routeLoadingFallback
              } />
              
              <Route path="*" element={<Navigate to="/" />} />

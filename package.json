@@ -6,6 +6,6 @@
     "dev": "npx -y serve -s . -l 5173"
   },
   "dependencies": {
-    "react-router-dom": "^7.14.0"
+    "react-router-dom": "^6.22.3"
   }
 }

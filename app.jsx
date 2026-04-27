@@ -351,11 +351,16 @@ function AppContent() {
   const fetchProducts = useCallback(async () => {
     if (!token) return;
     try {
+      setLoading(true);
       const res = await authFetch("/api/products");
       if (!res.ok) return;
       const data = await res.json();
       setProducts(Array.isArray(data) ? data : (data.products || []));
-    } catch { /* silent — optimistic update already applied */ }
+    } catch {
+      // silent; optimistic update already applied elsewhere
+    } finally {
+      setLoading(false);
+    }
   }, [token, authFetch]);
 
   const refreshDashboard = useCallback(() => {
@@ -398,7 +403,15 @@ function AppContent() {
     };
   }, [apiFetch, user]);
 
-  useEffect(() => { if (user) fetchBootstrap(); }, [user]);
+  useEffect(() => {
+    if (!user) return;
+    if (user.role === "customer") {
+      fetchProducts();
+      fetchBootstrap({ silent: true });
+      return;
+    }
+    fetchBootstrap();
+  }, [user, fetchBootstrap, fetchProducts]);
 
   useEffect(() => {
     if (!user || bootstrapState !== "error") return undefined;

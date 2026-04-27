@@ -139,6 +139,8 @@ function AppContent() {
   const navigate = useNavigate();
   const isInvoiceRoute = location.pathname === "/invoice";
   const [loading, setLoading] = useState(true);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_API_BASE_URL);
@@ -324,6 +326,7 @@ function AppContent() {
   const fetchBootstrap = useCallback(async ({ silent = false } = {}) => {
     if (!token) return;
     try {
+      setDashboardLoading(true);
       if (!silent) setLoading(true);
       setBootstrapState("loading");
       const res = await authFetch("/api/bootstrap");
@@ -343,6 +346,7 @@ function AppContent() {
       setBootstrapState("error");
       setError(err.message || "Something went wrong");
     } finally {
+      setDashboardLoading(false);
       if (!silent) setLoading(false);
     }
   }, [token, authFetch]);
@@ -351,6 +355,7 @@ function AppContent() {
   const fetchProducts = useCallback(async () => {
     if (!token) return;
     try {
+      setCatalogLoading(true);
       setLoading(true);
       const res = await authFetch("/api/products");
       if (!res.ok) return;
@@ -359,6 +364,7 @@ function AppContent() {
     } catch {
       // silent; optimistic update already applied elsewhere
     } finally {
+      setCatalogLoading(false);
       setLoading(false);
     }
   }, [token, authFetch]);
@@ -405,12 +411,8 @@ function AppContent() {
 
   useEffect(() => {
     if (!user) return;
-    if (user.role === "customer") {
-      fetchProducts();
-      fetchBootstrap({ silent: true });
-      return;
-    }
-    fetchBootstrap();
+    fetchProducts();
+    fetchBootstrap({ silent: true });
   }, [user, fetchBootstrap, fetchProducts]);
 
   useEffect(() => {
@@ -961,10 +963,10 @@ function AppContent() {
           <Routes>
             <Route path="/" element={
               <>
-                <DashboardMetrics cards={cards} user={user} loading={loading} />
+                <DashboardMetrics cards={cards} user={user} loading={dashboardLoading} />
                 <CraftCatalog
                   filteredProducts={filteredProducts}
-                  loading={loading}
+                  loading={catalogLoading}
                   query={query}
                   setQuery={setQuery}
                   category={category}
